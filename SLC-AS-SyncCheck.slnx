@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/Internal/" />
+  <Folder Name="/Internal/Code Analysis/">
+    <File Path="Internal/Code Analysis/qaction-debug.ruleset" />
+    <File Path="Internal/Code Analysis/qaction-release.ruleset" />
+    <File Path="Internal/Code Analysis/stylecop.json" />
+  </Folder>
+  <Project Path="SLC-AS-SyncCheck/SLC-AS-SyncCheck.csproj" />
+</Solution>
