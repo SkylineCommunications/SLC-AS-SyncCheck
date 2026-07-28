@@ -7,8 +7,8 @@ Revision History:
 
 DATE		VERSION		AUTHOR			COMMENTS
 
-17-10-2022	1.0.0.1		Skyline			Initial version
-28/07/2026	1.0.0.2		LFR, Skyline	Parse DOMAIN\username from the Username parameter so AD users authenticate without a separate Domain param (task 303353).
+17-10-2022	1.0.0		Skyline			Initial version
+28/07/2026	1.0.1		LFR, Skyline	Parse DOMAIN\username from the Username parameter so AD users authenticate without a separate Domain param (task 303353).
 										Fixed Backup domain resolution: was using Main DMA IP/ComputerName instead of Backup IP/name (task 303353).
 										Renamed output to SyncCheckResult_YYYYMMDD_HHMM.txt under C:\Skyline_Data\SyncCheckResults\; timestamp uses server-local time.
 										Added DEBUG line with resolved connection identity (DOMAIN\username + IP) for Main and Backup DMAs.
@@ -26,26 +26,13 @@ DATE		VERSION		AUTHOR			COMMENTS
 */
 
 using System;
-using System.Collections.Generic;
 using System.Globalization;
-using System.Text;
-using Skyline.DataMiner.Automation;
-using Skyline.DataMiner.Net.Messages;
-using System.Runtime.InteropServices;
-using System.Security.Permissions;
-using System.Security.AccessControl;
-using System.Security.Principal;
-using Skyline.DataMiner.Net.Messages.Advanced;
-using Skyline.DataMiner.Net.Filters;
-using System.Net;
-using System.Linq;
-using System.IO;
-using System.ComponentModel;
 using Skyline.Automation.Testing;
+using Skyline.DataMiner.Automation;
 
 public class Script
 {
-	public const string ScriptVersion = "1.0.0.15";
+	public const string ScriptVersion = "1.0.1";
 
 	public void Run(Engine engine)
 	{
@@ -100,19 +87,17 @@ namespace Skyline.Automation.Testing
 {
 	using System;
 	using System.Collections.Generic;
-	using System.Globalization;
-	using System.Text;
-	using Skyline.DataMiner.Automation;
-	using Skyline.DataMiner.Net.Messages;
-	using System.Runtime.InteropServices;
-	using Skyline.DataMiner.Net.Messages.Advanced;
-	using Skyline.DataMiner.Net.Filters;
-	using System.Net;
-	using System.Linq;
-	using System.IO;
 	using System.ComponentModel;
+	using System.Globalization;
+	using System.IO;
+	using System.Linq;
+	using System.Net;
+	using System.Runtime.InteropServices;
+	using System.Text;
 	using System.Xml;
 	using System.Xml.Linq;
+	using Skyline.DataMiner.Automation;
+	using Skyline.DataMiner.Net.Messages;
 
 	public enum LogLevel
 	{

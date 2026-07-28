@@ -8,8 +8,8 @@
 		<DataMinerType>AutomationScript</DataMinerType>
 		<GenerateDataMinerPackage>True</GenerateDataMinerPackage>
 		<MinimumRequiredDmVersion>10.4.0.0 - 14003</MinimumRequiredDmVersion>
-		<Version>1.0.0</Version>
-		<VersionComment>Initial Version</VersionComment>
+		<Version>1.0.1</Version>
+		<VersionComment></VersionComment>
 		<!-- Do NOT fill in the Organization Token here. This points to either an Environment Variable skyline__sdk__dataminertoken holding the organization token or a Visual Studio User Secret holding the token. -->
 		<CatalogPublishKeyName>skyline:sdk:dataminertoken</CatalogPublishKeyName>
 	</PropertyGroup>
