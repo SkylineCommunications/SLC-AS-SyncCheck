@@ -19,10 +19,10 @@ on:
 jobs:
  
   CI:
-    uses: SkylineCommunications/_ReusableWorkflows/.github/workflows/Automation Master Workflow.yml@main
+    uses: SkylineCommunications/_ReusableWorkflows/.github/workflows/Master Workflow.yml@main
     with:
-      sonarCloudProjectName: skylinecommunications_slc-as-synccheck
+      sonarcloud-project-name: skylinecommunications_slc-as-synccheck
       # The API-key: generated in the dataminer.services Admin app (https://admin.dataminer.services/) as authentication for a certain DataMiner System.
     secrets:
-      api-key: ${{ secrets.DATAMINER_TOKEN }}
+       DATAMINER_TOKEN: ${{ secrets.DATAMINER_TOKEN }} # The API key: generated in the DCP Admin app (https://admin.dataminer.services/) as authentication for a certain organization.
       # sonarCloudToken: ${{ secrets.SONAR_TOKEN }}
