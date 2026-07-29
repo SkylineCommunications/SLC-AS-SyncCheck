@@ -10,6 +10,8 @@ It is intended to troubleshoot the following errors in large clusters:
 - Errors occurring when new services reuse the name of old services
 - Synchronization errors related to services or elements
 
+The script produces a per-run report grouped by DMA under `C:\Skyline_Data\SyncCheckResults\`.
+
 For more information, see [Sync Check](https://aka.dataminer.services/Sync_Check).
 
 ## Username
@@ -23,4 +25,4 @@ The username parameter can be specified in the following ways:
 
 ## Prerequisites
 
-- A Windows account with local Administrator rights on the remote DMAs. The script accesses the `C:\Skyline DataMiner` folder through the administrative UNC share `\\&lt;DMA-IP&gt;\c$`.
+- A Windows account with local Administrator rights on the remote DMAs. The script accesses the `C:\Skyline DataMiner` folder through the administrative UNC share `\\<DMA-IP>\c$`.
