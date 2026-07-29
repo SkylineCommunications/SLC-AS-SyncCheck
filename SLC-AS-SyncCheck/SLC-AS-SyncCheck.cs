@@ -1586,7 +1586,7 @@ namespace Skyline.Automation.Testing
 
 					if (lMissingOnDMA.Count() > 0)
 					{
-						sb.Append("Missing services: ").Append(Environment.NewLine);
+						sb.Append("Orphaned remote-service references (source service no longer exists): ").Append(Environment.NewLine);
 						sb.Append(string.Join(Environment.NewLine, lMissingOnDMA)).Append(Environment.NewLine);
 					}
 
