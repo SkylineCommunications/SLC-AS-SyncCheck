@@ -7,25 +7,63 @@ Revision History:
 
 DATE		VERSION		AUTHOR			COMMENTS
 
-17-10-2022	1.0.0.1		Skyline			Initial version
+17-10-2022	1.0.0		Skyline			Initial version
+28/07/2026	1.0.1		LFR, Skyline	Parse DOMAIN\username from the Username parameter so AD users authenticate without a separate Domain param (task 303353).
+										Fixed Backup domain resolution: was using Main DMA IP/ComputerName instead of Backup IP/name (task 303353).
+										Renamed output to SyncCheckResult_YYYYMMDD_HHMM.txt under C:\Skyline_Data\SyncCheckResults\; timestamp uses server-local time.
+										Added DEBUG line with resolved connection identity (DOMAIN\username + IP) for Main and Backup DMAs.
+										Normalized parser error logging to one compact line per failure: '<msg> -> <ExceptionType>: <Message>'.
+										Grouped ERRORS section by source DMA (MAIN/BACKUP -> IP ComputerName) so operators can attribute each error without inspecting the UNC path.
+										Enriched ELEMENT/Service/RemoteService folder-info sections with the DMA ComputerName; unified format as "'<ComputerName>' => <IP>".
+										INFO sections rewritten: section header shows FO pair "(FO Pair: 'A' <-> 'B')"; per-block separators name verb + agent + role.
+										Added ComputerName to remaining section headers (Elements INFO, Service INFO, Sync Info Folder Check for Main/Backup DMA).
+										GetServicesBackup duplicate-entry error mislabeled as "Main Service folder"; corrected to "Backup Service folder".
+										Fixed Main/Backup ComputerName swap when SLNet responded via the Backup agent; roles now normalized using FailoverIsBackup.
+										Standardized offline-partner terminology on "Backup" in operator-facing output; "Failover" now refers only to the pair/feature.
+										SyncInfoDetails.GetDetailsFromFile guard now checks change.Attribute("type") (lowercase) to match the read and actual SyncInfo.xml casing.
+										Added Script.ScriptVersion const and injected it into the DEBUG header so each output identifies which script version produced it.
 ****************************************************************************
 */
 
 using System;
+using System.Globalization;
 using Skyline.Automation.Testing;
 using Skyline.DataMiner.Automation;
 
 public class Script
 {
+	public const string ScriptVersion = "1.0.1";
+
 	public void Run(Engine engine)
 	{
 		engine.Timeout = new TimeSpan(0, 45, 0);
 		ScriptData scriptdata = new ScriptData(engine);
 		try
 		{
-			string domain = "";
-			string user = engine.GetScriptParam("Username").Value;
+			string rawUser = engine.GetScriptParam("Username").Value;
 			string pass = engine.GetScriptParam("Password").Value;
+
+			// Parse supported Windows credential formats:
+			//   "alice"                    -> local (domain = "")
+			//   ".\alice"                  -> local (".\" stripped)
+			//   "MYDOMAIN\alice"           -> NETBIOS down-level (domain = "MYDOMAIN")
+			//   "alice@corp.example.com"   -> UPN, pass through as user, empty domain (SSPI resolves)
+			//   malformed ("\x", "x\", "") -> fall through as-is; auth will surface the error
+			string domain = String.Empty;
+			string trimmed = (rawUser ?? String.Empty).Trim();
+			string user = trimmed;
+			int sep = trimmed.IndexOf('\\');
+			if (sep > 0 && sep < trimmed.Length - 1)
+			{
+				string prefix = trimmed.Substring(0, sep);
+				user = trimmed.Substring(sep + 1);
+				// "." is the Windows alias for the local machine — treat as local (no domain).
+				if (!prefix.Equals(".", StringComparison.Ordinal))
+				{
+					domain = prefix;
+				}
+			}
+			// UPN (user@domain) needs no split: WNetUseConnection/SSPI accepts the full UPN as the username with an empty domain.
 
 			DMSHelper2 DMS = new DMSHelper2(scriptdata, domain, user, pass);
 
@@ -37,9 +75,10 @@ public class Script
 		}
 		finally
 		{
-			string destFolder = @"C:\Skyline_Data\SyncInfo\";
+			string destFolder = @"C:\Skyline_Data\SyncCheckResults\";
 			Skyline.DataMiner.Net.Tools.EnsureDirectoryExists(destFolder);
-			scriptdata.Log(destFolder + "SyncInfo.txt");
+			string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmm", CultureInfo.InvariantCulture);
+			scriptdata.Log(destFolder + "SyncCheckResult_" + timestamp + ".txt");
 		}
 	}
 }
@@ -72,12 +111,14 @@ namespace Skyline.Automation.Testing
 		public List<string> lErrors { get; set; }
 		public List<string> lDebug { get; set; }
 		public List<string> lDebugCompleetParts { get; set; }
+		public List<DMAIdentity> dmaIdentities { get; set; }
 
 		public ScriptData(Engine engine)
 		{
 			lErrors = new List<string>();
 			lDebug = new List<string>();
 			lDebugCompleetParts = new List<string>();
+			dmaIdentities = new List<DMAIdentity>();
 			this.engine = engine;
 		}
 
@@ -93,9 +134,75 @@ namespace Skyline.Automation.Testing
 		{
 			lDebugCompleetParts.Add(sDebugCompleetPart);
 		}
+		public class DMAIdentity
+		{
+			public string Role { get; set; }
+			public string IP { get; set; }
+			public string ComputerName { get; set; }
+			public string Header
+			{
+				get
+				{
+					string ipDisp = IP ?? "LOCAL";
+					string cn = string.IsNullOrEmpty(ComputerName) ? "?" : "'" + ComputerName + "'";
+					return "--- " + Role + ": " + cn + " => " + ipDisp + " ---";
+				}
+			}
+		}
+
+		public void RegisterDMA(string role, string ip, string computerName)
+		{
+			dmaIdentities.Add(new DMAIdentity { Role = role, IP = ip, ComputerName = computerName });
+		}
+
 		public string GetErrorText()
 		{
-			return GetLogging("ERRORS", lErrors.ToArray());
+			if (dmaIdentities == null || dmaIdentities.Count == 0 || lErrors.Count == 0)
+			{
+				return GetLogging("ERRORS", lErrors.ToArray());
+			}
+
+			StringBuilder sb = new StringBuilder();
+			sb.Append(GetHeader("ERRORS"));
+
+			List<string> remaining = new List<string>(lErrors);
+			bool anyPrinted = false;
+			foreach (DMAIdentity id in dmaIdentities)
+			{
+				List<string> matched = new List<string>();
+				if (!string.IsNullOrEmpty(id.IP))
+				{
+					string needle = @"\\" + id.IP + @"\";
+					for (int i = remaining.Count - 1; i >= 0; i--)
+					{
+						if (remaining[i].IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0)
+						{
+							matched.Insert(0, remaining[i]);
+							remaining.RemoveAt(i);
+						}
+					}
+				}
+				if (matched.Count > 0)
+				{
+					sb.Append(id.Header).Append(Environment.NewLine);
+					sb.Append(string.Join(Environment.NewLine, matched.ToArray())).Append(Environment.NewLine);
+					anyPrinted = true;
+				}
+			}
+
+			if (remaining.Count > 0)
+			{
+				sb.Append("--- OTHER ---").Append(Environment.NewLine);
+				sb.Append(string.Join(Environment.NewLine, remaining.ToArray())).Append(Environment.NewLine);
+				anyPrinted = true;
+			}
+
+			if (!anyPrinted)
+			{
+				sb.Append("No ERRORS").Append(Environment.NewLine);
+			}
+			sb.Append(GetTrailer());
+			return sb.ToString();
 		}
 		public string GetDebugText()
 		{
@@ -526,7 +633,7 @@ namespace Skyline.Automation.Testing
 
 		public DMSHelper2(ScriptData scriptdata, string domain, string username, string password, bool bSyncInfo = false)
 		{
-			scriptdata.AddDebug("Start Retrieving Cluster DMA's " + DateTime.UtcNow);
+			scriptdata.AddDebug("Start Retrieving Cluster DMA's (Sync Check v" + Script.ScriptVersion + ") " + DateTime.Now);
 			DMAs = new Dictionary<int, DMAFolderHelper>();
 			var Msg = new GetInfoMessage(InfoType.DataMinerInfo);
 			var Response = Engine.SLNet.SendMessage(Msg);
@@ -535,7 +642,7 @@ namespace Skyline.Automation.Testing
 				var InfoMsg = Response[i] as GetDataMinerInfoResponseMessage;
 				if (InfoMsg.FailoverRawIPs == null || InfoMsg.FailoverRawIPs.Length == 0)
 				{
-					scriptdata.AddDebug(string.Format("Found DMA without Failover {0}: '{1}'=>{2}", InfoMsg.ID, InfoMsg.ComputerName, InfoMsg.PrimaryIP));
+					scriptdata.AddDebug(string.Format("Found DMA without Failover {0}: '{1}' => {2}", InfoMsg.ID, InfoMsg.ComputerName, InfoMsg.PrimaryIP));
 					DMAs[InfoMsg.ID] = new DMAFolderHelper(InfoMsg.ID, InfoMsg.PrimaryIP, null, InfoMsg.ComputerName, null, domain, username, password, bSyncInfo);
 				}
 				else // Failover DMA active
@@ -543,10 +650,10 @@ namespace Skyline.Automation.Testing
 					var IPs = InfoMsg.FailoverRawIPs;
 					if (IPs.Length == 2)
 					{
-						string IPCurrent = InfoMsg.FailoverIsBackup ? IPs[1] : IPs[0];
-						string IPOther = InfoMsg.FailoverIsBackup ? IPs[0] : IPs[1];
-						scriptdata.AddDebug(String.Format("Found Failover Pair {0}: '{1}'=>{2} & '{3}'=>{4}", InfoMsg.ID, InfoMsg.ComputerName, IPCurrent, InfoMsg.FailoverPartnerName, IPOther));
-						DMAs[InfoMsg.ID] = new DMAFolderHelper(InfoMsg.ID, IPs[0], IPs[1], InfoMsg.ComputerName, InfoMsg.FailoverPartnerName, domain, username, password, bSyncInfo);
+						string mainName = InfoMsg.FailoverIsBackup ? InfoMsg.FailoverPartnerName : InfoMsg.ComputerName;
+						string backupName = InfoMsg.FailoverIsBackup ? InfoMsg.ComputerName : InfoMsg.FailoverPartnerName;
+						scriptdata.AddDebug(String.Format("Found Failover Pair {0}: Main '{1}' => {2}, Backup '{3}' => {4}", InfoMsg.ID, mainName, IPs[0], backupName, IPs[1]));
+						DMAs[InfoMsg.ID] = new DMAFolderHelper(InfoMsg.ID, IPs[0], IPs[1], mainName, backupName, domain, username, password, bSyncInfo);
 					}
 					else
 					{
@@ -861,7 +968,7 @@ namespace Skyline.Automation.Testing
 
 				foreach (var dupl in dictDuplIDs)
 				{
-					scriptdata.AddError(string.Format("Duplicate Entries in Main Service folder for ID {0}:{1}", dupl.Key, string.Join(", ", dupl.Value)));
+					scriptdata.AddError(string.Format("Duplicate Entries in Backup Service folder for ID {0}:{1}", dupl.Key, string.Join(", ", dupl.Value)));
 				}
 			}
 
@@ -991,36 +1098,31 @@ namespace Skyline.Automation.Testing
 
 
 				StringBuilder sb = new StringBuilder();
-				sb.Append(ScriptData.GetHeader("ELEMENT FOLDER INFO FOR DMA " + DMAID)).Append(Environment.NewLine);
+				string pairSuffix = string.IsNullOrEmpty(FailoverName) ? " '" + ComputerName + "'" : " (FO Pair: '" + ComputerName + "' <-> '" + FailoverName + "')";
+				sb.Append(ScriptData.GetHeader("ELEMENT FOLDER INFO FOR DMA " + DMAID + pairSuffix)).Append(Environment.NewLine);
 				sb.Append("INFO: Compared based on DMAID, ELID, Name, Protocol, Version and Properties").Append(Environment.NewLine);
 				if (MissinOnMain.Count() > 0 || FailedToParse.Count() > 0 || MissinOnBackup.Count() > 0 || NotInSync.Count() > 0)
 				{
 					if (MissinOnMain.Count() > 0)
 					{
-						sb.Append("------" + IP + "------").Append(Environment.NewLine);
-						sb.Append("Missing: ").Append(Environment.NewLine);
+						sb.Append("------ Missing on '" + ComputerName + "' => " + IP + " (Main) ------").Append(Environment.NewLine);
 						sb.Append(string.Join(Environment.NewLine, MissinOnMain)).Append(Environment.NewLine);
 					}
 
 					if (MissinOnBackup.Count() > 0)
 					{
-						sb.Append("------" + FailoverIP + "------").Append(Environment.NewLine);
-						sb.Append("Missing: ").Append(Environment.NewLine);
+						sb.Append("------ Missing on '" + FailoverName + "' => " + FailoverIP + " (Backup) ------").Append(Environment.NewLine);
 						sb.Append(string.Join(Environment.NewLine, MissinOnBackup)).Append(Environment.NewLine);
 					}
-					if (NotInSync.Count() > 0 || FailedToParse.Count() > 0)
+					if (NotInSync.Count() > 0)
 					{
-						sb.Append("------Both------").Append(Environment.NewLine);
-						if (NotInSync.Count() > 0)
-						{
-							sb.Append("Not in Sync: ").Append(Environment.NewLine);
-							sb.Append(string.Join(Environment.NewLine, NotInSync)).Append(Environment.NewLine);
-						}
-						if (FailedToParse.Count() > 0)
-						{
-							sb.Append("Failed To Parse: ").Append(Environment.NewLine);
-							sb.Append(string.Join(Environment.NewLine, FailedToParse)).Append(Environment.NewLine);
-						}
+						sb.Append("------ Not in Sync (on both) ------").Append(Environment.NewLine);
+						sb.Append(string.Join(Environment.NewLine, NotInSync)).Append(Environment.NewLine);
+					}
+					if (FailedToParse.Count() > 0)
+					{
+						sb.Append("------ Failed to parse (on both) ------").Append(Environment.NewLine);
+						sb.Append(string.Join(Environment.NewLine, FailedToParse)).Append(Environment.NewLine);
 					}
 				}
 				else
@@ -1068,37 +1170,32 @@ namespace Skyline.Automation.Testing
 
 
 				StringBuilder sb = new StringBuilder();
-				sb.Append(ScriptData.GetHeader("Service FOLDER INFO FOR DMA " + DMAID)).Append(Environment.NewLine);
+				string pairSuffix = string.IsNullOrEmpty(FailoverName) ? " '" + ComputerName + "'" : " (FO Pair: '" + ComputerName + "' <-> '" + FailoverName + "')";
+				sb.Append(ScriptData.GetHeader("Service FOLDER INFO FOR DMA " + DMAID + pairSuffix)).Append(Environment.NewLine);
 				sb.Append("INFO: Compared based on DMAID, ID, Name and Properties").Append(Environment.NewLine);
 
 				if (MissinOnMain.Count() > 0 || FailedToParse.Count() > 0 || MissinOnBackup.Count() > 0 || NotInSync.Count() > 0)
 				{
 					if (MissinOnMain.Count() > 0)
 					{
-						sb.Append("------" + IP + "------").Append(Environment.NewLine);
-						sb.Append("Missing: ").Append(Environment.NewLine);
+						sb.Append("------ Missing on '" + ComputerName + "' => " + IP + " (Main) ------").Append(Environment.NewLine);
 						sb.Append(string.Join(Environment.NewLine, MissinOnMain)).Append(Environment.NewLine);
 					}
 
 					if (MissinOnBackup.Count() > 0)
 					{
-						sb.Append("------" + FailoverIP + "------").Append(Environment.NewLine);
-						sb.Append("Missing: ").Append(Environment.NewLine);
+						sb.Append("------ Missing on '" + FailoverName + "' => " + FailoverIP + " (Backup) ------").Append(Environment.NewLine);
 						sb.Append(string.Join(Environment.NewLine, MissinOnBackup)).Append(Environment.NewLine);
 					}
-					if (NotInSync.Count() > 0 || FailedToParse.Count() > 0)
+					if (NotInSync.Count() > 0)
 					{
-						sb.Append("------Both------").Append(Environment.NewLine);
-						if (NotInSync.Count() > 0)
-						{
-							sb.Append("Not in Sync: ").Append(Environment.NewLine);
-							sb.Append(string.Join(Environment.NewLine, NotInSync)).Append(Environment.NewLine);
-						}
-						if (FailedToParse.Count() > 0)
-						{
-							sb.Append("Failed To Parse: ").Append(Environment.NewLine);
-							sb.Append(string.Join(Environment.NewLine, FailedToParse)).Append(Environment.NewLine);
-						}
+						sb.Append("------ Not in Sync (on both) ------").Append(Environment.NewLine);
+						sb.Append(string.Join(Environment.NewLine, NotInSync)).Append(Environment.NewLine);
+					}
+					if (FailedToParse.Count() > 0)
+					{
+						sb.Append("------ Failed to parse (on both) ------").Append(Environment.NewLine);
+						sb.Append(string.Join(Environment.NewLine, FailedToParse)).Append(Environment.NewLine);
 					}
 				}
 				else
@@ -1165,7 +1262,7 @@ namespace Skyline.Automation.Testing
 				}
 
 				StringBuilder sb = new StringBuilder();
-				sb.Append(ScriptData.GetHeader("Elements INFO FOR DMA " + DMAID)).Append(Environment.NewLine);
+				sb.Append(ScriptData.GetHeader("Elements INFO FOR DMA " + DMAID + " '" + ComputerName + "'")).Append(Environment.NewLine);
 				sb.Append("INFO: Compared based on DMAID, ID, protocol, version and Name").Append(Environment.NewLine);
 
 				if (lNotInSLNet.Count() > 0 || lNotInFolder.Count() > 0 || lNotInSync.Count() > 0)
@@ -1250,7 +1347,7 @@ namespace Skyline.Automation.Testing
 				}
 
 				StringBuilder sb = new StringBuilder();
-				sb.Append(ScriptData.GetHeader("Service INFO FOR DMA " + DMAID)).Append(Environment.NewLine);
+				sb.Append(ScriptData.GetHeader("Service INFO FOR DMA " + DMAID + " '" + ComputerName + "'")).Append(Environment.NewLine);
 				sb.Append("INFO: Compared based on DMAID, ID, protocol, version and Name").Append(Environment.NewLine);
 
 				if (lNotInSLNet.Count() > 0 || lNotInFolder.Count() > 0 || lNotInSync.Count() > 0)
@@ -1337,14 +1434,15 @@ namespace Skyline.Automation.Testing
 				}
 
 				StringBuilder sb = new StringBuilder();
-				sb.Append(ScriptData.GetHeader("Remote Service Folder Check for DMA " + DMAID)).Append(Environment.NewLine);
-				sb.Append("INFO: MAKE SURE THE MAIN BACKUP IS IN SYNC FIRST!").Append(Environment.NewLine);
+				string pairSuffix = string.IsNullOrEmpty(FailoverName) ? " '" + ComputerName + "'" : " (FO Pair: '" + ComputerName + "' <-> '" + FailoverName + "')";
+				sb.Append(ScriptData.GetHeader("Remote Service Folder Check for DMA " + DMAID + pairSuffix)).Append(Environment.NewLine);
+				sb.Append("INFO: MAKE SURE MAIN AND BACKUP ARE IN SYNC FIRST!").Append(Environment.NewLine);
 
 				if (lMissingOnMain.Count() > 0 || lFailedToParse.Count() > 0 || lMissingOnBackup.Count() > 0 || lMissingDMAOnMain.Count() > 0 || lMissingDMAOnBackup.Count() > 0 || lNotInSync.Count() > 0)
 				{
 					if (lMissingDMAOnMain.Count() > 0 || lMissingOnMain.Count() > 0)
 					{
-						sb.Append("------" + IP + "------").Append(Environment.NewLine);
+						sb.Append("------ Missing on '" + ComputerName + "' => " + IP + " (Main) ------").Append(Environment.NewLine);
 						if (lMissingDMAOnMain.Count() > 0)
 						{
 							sb.Append("Missing DMA: ").Append(Environment.NewLine);
@@ -1360,7 +1458,7 @@ namespace Skyline.Automation.Testing
 
 					if (lMissingDMAOnBackup.Count() > 0 || lMissingOnBackup.Count() > 0)
 					{
-						sb.Append("------" + FailoverIP + "------").Append(Environment.NewLine);
+						sb.Append("------ Missing on '" + FailoverName + "' => " + FailoverIP + " (Backup) ------").Append(Environment.NewLine);
 						if (lMissingDMAOnBackup.Count() > 0)
 						{
 							sb.Append("Missing DMA: ").Append(Environment.NewLine);
@@ -1374,20 +1472,16 @@ namespace Skyline.Automation.Testing
 						}
 					}
 
-					if (lFailedToParse.Count() > 0 || lNotInSync.Count() > 0)
+					if (lFailedToParse.Count() > 0)
 					{
-						sb.Append("------Both------").Append(Environment.NewLine);
-						if (lFailedToParse.Count() > 0)
-						{
-							sb.Append("Failed to parse: ").Append(Environment.NewLine);
-							sb.Append(string.Join(Environment.NewLine, lFailedToParse)).Append(Environment.NewLine);
-						}
+						sb.Append("------ Failed to parse (on both) ------").Append(Environment.NewLine);
+						sb.Append(string.Join(Environment.NewLine, lFailedToParse)).Append(Environment.NewLine);
+					}
 
-						if (lNotInSync.Count() > 0)
-						{
-							sb.Append("Failed to parse: ").Append(Environment.NewLine);
-							sb.Append(string.Join(Environment.NewLine, lNotInSync)).Append(Environment.NewLine);
-						}
+					if (lNotInSync.Count() > 0)
+					{
+						sb.Append("------ Not in Sync (on both) ------").Append(Environment.NewLine);
+						sb.Append(string.Join(Environment.NewLine, lNotInSync)).Append(Environment.NewLine);
 					}
 				}
 				else
@@ -1462,8 +1556,8 @@ namespace Skyline.Automation.Testing
 				}
 
 				StringBuilder sb = new StringBuilder();
-				sb.Append(ScriptData.GetHeader("Remote Service Folder Check for DMA " + DMAID + " with other DMAs")).Append(Environment.NewLine);
-				sb.Append("INFO: MAKE SURE THE MAIN BACKUP IS IN SYNC FIRST!").Append(Environment.NewLine);
+				sb.Append(ScriptData.GetHeader("Remote Service Folder Check for DMA " + DMAID + " '" + ComputerName + "'" + " with other DMAs")).Append(Environment.NewLine);
+				sb.Append("INFO: MAKE SURE MAIN AND BACKUP ARE IN SYNC FIRST!").Append(Environment.NewLine);
 
 				if (RemFolderContainsOwn)
 				{
@@ -1492,7 +1586,7 @@ namespace Skyline.Automation.Testing
 
 					if (lMissingOnDMA.Count() > 0)
 					{
-						sb.Append("Missing services: ").Append(Environment.NewLine);
+						sb.Append("Orphaned remote-service references (source service no longer exists): ").Append(Environment.NewLine);
 						sb.Append(string.Join(Environment.NewLine, lMissingOnDMA)).Append(Environment.NewLine);
 					}
 
@@ -1519,7 +1613,7 @@ namespace Skyline.Automation.Testing
 			public void CompareSyncFileMain(ScriptData scriptdata, Dictionary<int, Dictionary<string, ServiceDetails>> dictFoundServices, Dictionary<int, Dictionary<string, ElementDetails>> dictFoundElements)
 			{
 				StringBuilder sb = new StringBuilder();
-				sb.Append(ScriptData.GetHeader("Sync Info Folder Check for Main DMA " + DMAID + " with other DMAs")).Append(Environment.NewLine);
+				sb.Append(ScriptData.GetHeader("Sync Info Folder Check for Main DMA " + DMAID + " '" + ComputerName + "' with other DMAs")).Append(Environment.NewLine);
 				sb.Append("INFO: Don't make changes to the sync document unless you know how!").Append(Environment.NewLine);
 
 				HashSet<string> hsFilesChecked = new HashSet<string>();
@@ -1648,7 +1742,7 @@ namespace Skyline.Automation.Testing
 			public void CompareSyncFileBackup(ScriptData scriptdata, Dictionary<int, Dictionary<string, ServiceDetails>> dictFoundServices, Dictionary<int, Dictionary<string, ElementDetails>> dictFoundElements)
 			{
 				StringBuilder sb = new StringBuilder();
-				sb.Append(ScriptData.GetHeader("Sync Info Folder Check for Backup DMA " + DMAID + " with other DMAs")).Append(Environment.NewLine);
+				sb.Append(ScriptData.GetHeader("Sync Info Folder Check for Backup DMA " + DMAID + " '" + FailoverName + "' with other DMAs")).Append(Environment.NewLine);
 				sb.Append("INFO: Don't make changes to the sync document unless you know how!").Append(Environment.NewLine);
 
 				HashSet<string> hsFilesChecked = new HashSet<string>();
@@ -1783,7 +1877,9 @@ namespace Skyline.Automation.Testing
 					basePathMain = (IP == null) ? @"C:\Skyline DataMiner" : @"\\" + IP + @"\c$\Skyline DataMiner";
 
 					if (IP == null)
+
 					{
+						scriptdata.RegisterDMA("MAIN", null, ComputerName);
 						GetElementsMain(scriptdata);
 						GetServicesMain(scriptdata);
 						GetRemoteServicesMain(scriptdata);
@@ -1806,6 +1902,8 @@ namespace Skyline.Automation.Testing
 								MainDomain = ComputerName;
 							}
 						}
+						scriptdata.AddDebug("Connecting to MAIN: " + IP + " as " + MainDomain + @"\" + username);
+						scriptdata.RegisterDMA("MAIN", IP, ComputerName);
 						using (NetworkShareAccesser.Access(IP, MainDomain, username, password))
 						{
 							GetElementsMain(scriptdata);
@@ -1829,13 +1927,15 @@ namespace Skyline.Automation.Testing
 						{
 							try
 							{
-								FailoverDomain = Dns.GetHostEntry(IP).HostName;
+								FailoverDomain = Dns.GetHostEntry(FailoverIP).HostName;
 							}
 							catch (System.Net.Sockets.SocketException)
 							{
-								FailoverDomain = ComputerName;
+								FailoverDomain = FailoverName;
 							}
 						}
+						scriptdata.AddDebug("Connecting to BACKUP: " + FailoverIP + " as " + FailoverDomain + @"\" + username);
+						scriptdata.RegisterDMA("BACKUP", FailoverIP, FailoverName);
 						using (NetworkShareAccesser.Access(FailoverIP, FailoverDomain, username, password))
 						{
 							GetElementsBackup(scriptdata);
@@ -1871,7 +1971,7 @@ namespace Skyline.Automation.Testing
 				}
 				catch (Exception e)
 				{
-					scriptdata.AddError("RetrieveInfoFromFolders Exception: " + e.ToString());
+					scriptdata.AddError("RetrieveInfoFromFolders Exception -> " + e.GetType().Name + ": " + e.Message);
 				}
 			}
 
@@ -1925,9 +2025,9 @@ namespace Skyline.Automation.Testing
 						XDocument xDoc = XDocument.Load(sPath);
 						return new ServiceDetails(xDoc);
 					}
-					catch
+					catch (Exception e)
 					{
-						scriptData.AddError("Failed to parse ServiceDetails for " + sPath);
+						scriptData.AddError("Failed to parse ServiceDetails for " + sPath + " -> " + e.GetType().Name + ": " + e.Message);
 						return null;
 					}
 				}
@@ -1967,9 +2067,9 @@ namespace Skyline.Automation.Testing
 
 						return new ServiceDetails(iDMAID, iID, sName, lProps);
 					}
-					catch
+					catch (Exception e)
 					{
-						scriptData.AddError("Failed to parse ServiceDetails for " + sPath);
+						scriptData.AddError("Failed to parse ServiceDetails for " + sPath + " -> " + e.GetType().Name + ": " + e.Message);
 						return null;
 					}
 				}
@@ -2062,7 +2162,7 @@ namespace Skyline.Automation.Testing
 					}
 					catch (Exception e)
 					{
-						scriptData.AddError("Failed to parse ElementDetails for " + sPath + Environment.NewLine + e.ToString());
+						scriptData.AddError("Failed to parse ElementDetails for " + sPath + " -> " + e.GetType().Name + ": " + e.Message);
 						return null;
 					}
 				}
@@ -2172,7 +2272,7 @@ namespace Skyline.Automation.Testing
 
 					foreach (var change in Changes)
 					{
-						if (change.Attribute("Type") != null && change.Attribute("time") != null && change.Attribute("file") != null)
+						if (change.Attribute("type") != null && change.Attribute("time") != null && change.Attribute("file") != null)
 						{
 							string sFile = change.Attribute("file").Value;
 							dictDetails[sFile] = new SyncInfoDetails(change.Attribute("type").Value, change.Attribute("time").Value, sFile);
@@ -2189,9 +2289,9 @@ namespace Skyline.Automation.Testing
 						XDocument xDoc = XDocument.Load(sPath);
 						return GetDetailsFromFile(xDoc);
 					}
-					catch
+					catch (Exception e)
 					{
-						scriptdata.AddError("Failed to parse SyncInfo for " + sPath);
+						scriptdata.AddError("Failed to parse SyncInfo for " + sPath + " -> " + e.GetType().Name + ": " + e.Message);
 						return null;
 					}
 				}
@@ -2516,4 +2616,3 @@ namespace Skyline.Automation.Testing
 		}
 	}
 }
-
