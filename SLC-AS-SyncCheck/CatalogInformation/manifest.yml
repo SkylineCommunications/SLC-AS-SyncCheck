@@ -59,7 +59,7 @@ documentation_url: https://aka.dataminer.services/Sync_Check
 #   The name is required; max 256 characters.
 #   The email and url are optional, and should be in valid email/URL formats.
 owners:
-  - name: 'LFR'
+  - name: 'Luís Freitas'
     email: 
     url: 
 
