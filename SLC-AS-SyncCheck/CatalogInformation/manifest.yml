@@ -33,7 +33,7 @@ id: 151f362f-673a-4674-b678-f1f494b1713a
 #   Max length: 100 characters.
 #   Cannot contain newlines.
 #   Cannot contain leading or trailing whitespace characters.
-title: SLC-AS-SyncCheck
+title: 'Synchronization Check'
 
 # [Optional]
 # General information about the Catalog item.
