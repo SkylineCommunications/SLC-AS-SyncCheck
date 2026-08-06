@@ -16,11 +16,11 @@ For more information, see [Sync Check](https://aka.dataminer.services/Sync_Check
 
 ## Key Features
 
-- **Detect Duplicate IDs**: Identify duplicate service or element IDs across a DataMiner System.
-- **Catch Service Reuse Errors**: Flag issues when a new service reuses the name of an old, removed service.
-- **Verify Synchronization**: Check elements and services for synchronization errors, including across Failover Agents.
-- **Generate Per-DMA Reports**: Produce a structured report grouped by DMA for easy review.
-- **Support Large Clusters**: Built to troubleshoot synchronization issues in large, multi-DMA clusters.
+- **Detect duplicate IDs**: Identify duplicate service or element IDs across a DataMiner System.
+- **Catch service reuse errors**: Flag issues when a new service reuses the name of an old, removed service.
+- **Verify synchronization**: Check elements and services for synchronization errors, including across Failover Agents.
+- **Generate per-DMA reports**: Produce a structured report grouped by DMA for easy review.
+- **Support large clusters**: Built to troubleshoot synchronization issues in large, multi-DMA clusters.
 
 ## Username
 
