@@ -15,7 +15,7 @@
 #   - System Health: If the Catalog item is intended to monitor the health of a system.
 #   - User-Defined API: If the Catalog item is a DataMiner Automation script designed as a user-defined API.
 #   - Visual Overview: If the Catalog item is a Microsoft Visio design.
-type: Custom Solution
+type: Automation
 
 # [Required] 
 # The ID of the Catalog item.
@@ -33,7 +33,7 @@ id: 151f362f-673a-4674-b678-f1f494b1713a
 #   Max length: 100 characters.
 #   Cannot contain newlines.
 #   Cannot contain leading or trailing whitespace characters.
-title: SLC-AS-SyncCheck
+title: 'Synchronization Check'
 
 # [Optional]
 # General information about the Catalog item.
@@ -45,21 +45,21 @@ short_description:
 # A valid URL that points to the source code.
 #   A valid URL
 #   Max length: 2048 characters
-source_code_url: 
+source_code_url: https://github.com/SkylineCommunications/SLC-AS-SyncCheck
 
 # [Optional]
 # A valid URL that points to documentation.
 #   A valid URL
 #   Max length: 2048 characters
 # Currently not shown in the Catalog UI but will be supported in the near future.
-documentation_url: 
+documentation_url: https://aka.dataminer.services/Sync_Check
 
 # [Optional]
 # People who are responsible for this Catalog item. Might be developers, but this is not required.
 #   The name is required; max 256 characters.
 #   The email and url are optional, and should be in valid email/URL formats.
 owners:
-  - name: 'LFR'
+  - name: 'Luís Freitas'
     email: 
     url: 
 
@@ -70,7 +70,10 @@ owners:
 #   Cannot contain newlines.
 #   Cannot contain leading or trailing whitespace characters.
 tags:
-  - 
+  - Cluster Health
+  - Data Synchronization
+  - Failover Support
+  - Troubleshooting
 
 # [Optional]
 # The ID of the vendor.

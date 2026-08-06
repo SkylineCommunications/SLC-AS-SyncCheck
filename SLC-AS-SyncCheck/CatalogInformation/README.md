@@ -14,6 +14,14 @@ The script produces a per-run report grouped by DMA under `C:\Skyline_Data\SyncC
 
 For more information, see [Sync Check](https://aka.dataminer.services/Sync_Check).
 
+## Key Features
+
+- **Detect duplicate IDs**: Identify duplicate service or element IDs across a DataMiner System.
+- **Catch service reuse errors**: Flag issues when a new service reuses the name of an old, removed service.
+- **Verify synchronization**: Check elements and services for synchronization errors, including across Failover Agents.
+- **Generate per-DMA reports**: Produce a structured report grouped by DMA for easy review.
+- **Support large clusters**: Built to troubleshoot synchronization issues in large, multi-DMA clusters.
+
 ## Username
 
 The username parameter can be specified in the following ways:
@@ -25,4 +33,5 @@ The username parameter can be specified in the following ways:
 
 ## Prerequisites
 
+- DataMiner 10.4.0.0 (build 14003) or later.
 - A Windows account with local Administrator rights on the remote DMAs. The script accesses the `C:\Skyline DataMiner` folder through the administrative UNC share `\\<DMA-IP>\c$`.
